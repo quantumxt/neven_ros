@@ -6,7 +6,6 @@
 #include <pcl/point_types.h>
 
 #include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/passthrough.h>
 #include <pcl/filters/statistical_outlier_removal.h>
 
 #include <pcl/sample_consensus/method_types.h>
@@ -17,6 +16,7 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/kdtree/kdtree.h>
 #include <pcl/segmentation/extract_clusters.h>
+#include <pcl/surface/concave_hull.h>
 
 #include <visualization_msgs/MarkerArray.h>
 #include <visualization_msgs/Marker.h>
@@ -55,12 +55,28 @@ void initMinMax(minMax& src)
 
 void compareVals(const pcl::PointXYZRGBA& pcl_in, minMax& src)
 {
-    src.pt_min.x = pcl_in.x < src.pt_min.x ? pcl_in.x : src.pt_min.x;
-    src.pt_min.y = pcl_in.y < src.pt_min.y ? pcl_in.y : src.pt_min.y;
-    src.pt_min.z = pcl_in.z < src.pt_min.z ? pcl_in.z : src.pt_min.z;
-    src.pt_max.x = pcl_in.x > src.pt_max.x ? pcl_in.x : src.pt_max.x;
-    src.pt_max.y = pcl_in.y > src.pt_max.y ? pcl_in.y : src.pt_max.y;
-    src.pt_max.z = pcl_in.z > src.pt_max.z ? pcl_in.z : src.pt_max.z;
+    if (pcl_in.x < src.pt_min.x) {
+        src.pt_min.x = pcl_in.x;
+    }
+    else if (pcl_in.x > src.pt_max.x) {
+        src.pt_max.x = pcl_in.x;
+    }
+
+    if (pcl_in.y < src.pt_min.y) {
+        src.pt_min.y = pcl_in.y;
+    }
+    else if (pcl_in.y > src.pt_max.y) {
+        src.pt_max.y = pcl_in.y;
+    }
+
+    if (pcl_in.z < src.pt_min.z) {
+        src.pt_min.z = pcl_in.z;
+    }
+    else if (pcl_in.z > src.pt_max.z) {
+        src.pt_max.z = pcl_in.z;
+    }
+
+    //ROS_INFO("MinMax [x y z x y z]: %f %f %f %f %f %f", src.pt_min.x,src.pt_min.y,src.pt_min.z, src.pt_max.x,src.pt_max.y,src.pt_max.z);
 }
 
 geometry_msgs::Pose createPose(const float& sx, const float& sy, const float& sz)
@@ -141,7 +157,6 @@ void vx_grid(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<p
 void sor_filter(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out, const int& mean_k, const float& std_thres)
 {
     pcl::StatisticalOutlierRemoval<pcl::PointXYZRGBA> sor;
-
     sor.setInputCloud(cld_in.makeShared());
     sor.setMeanK(mean_k);
     sor.setStddevMulThresh(std_thres);
@@ -195,11 +210,11 @@ void p_seg(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::Poin
     }
 }
 
-void euclus(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in)
+void euclus(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr& cld_in)
 {
     // Creating the KdTree object for the search method of the extraction
     pcl::search::KdTree<pcl::PointXYZRGBA>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGBA>);
-    tree->setInputCloud(cld_in.makeShared());
+    tree->setInputCloud(cld_in);
 
     std::vector<pcl::PointIndices> cluster_indices;
     pcl::EuclideanClusterExtraction<pcl::PointXYZRGBA> ec;
@@ -207,7 +222,7 @@ void euclus(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in)
     ec.setMinClusterSize(150);
     ec.setMaxClusterSize(25000);
     ec.setSearchMethod(tree);
-    ec.setInputCloud(cld_in.makeShared());
+    ec.setInputCloud(cld_in);
     ec.extract(cluster_indices);
 
     ROS_INFO("Clusters: %i", cluster_indices.size());
@@ -216,46 +231,60 @@ void euclus(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in)
     visualization_msgs::MarkerArray m_centroid;
     visualization_msgs::MarkerArray m_boundRect;
 
-    int j = 0;
-    for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin(); it != cluster_indices.end(); ++it) {
-        pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud_cluster(new pcl::PointCloud<pcl::PointXYZRGBA>);
+    int j = 0; //track clusters
 
-        minMax bound_points; //Used to keep track of the bounding volume of the pcl cluster
-        initMinMax(bound_points);
+    minMax bound_points; //Used to keep track of the bounding volume of the pcl cluster
+    initMinMax(bound_points);
+
+    for (std::vector<pcl::PointIndices>::const_iterator it = cluster_indices.begin(); it != cluster_indices.end(); ++it) {
+
+        pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cloud_cluster(new pcl::PointCloud<pcl::PointXYZRGBA>);
+        pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cHull_pts(new pcl::PointCloud<pcl::PointXYZRGBA>); //Temp pcl to hold convex hull pts
 
         for (std::vector<int>::const_iterator pit = it->indices.begin(); pit != it->indices.end(); ++pit) {
-            cloud_cluster->push_back((cld_in)[*pit]); //*
+            cloud_cluster->push_back((*cld_in)[*pit]); //*
             //ROS_INFO("XX [%i]: %i",j, *pit);
-            cld_in.points[*pit].r = 0;
-            cld_in.points[*pit].g = 40 * (j + 1);
-            cld_in.points[*pit].b = 0;
-            cld_in.points[*pit].a = 255;
-            compareVals(cld_in.points[*pit], bound_points); //Get minMax vals of cluster
-            //ROS_INFO("MinMax [x y z x y z]: %f %f %f %f %f %f", bound_points.pt_min.x,bound_points.pt_min.y,bound_points.pt_min.z, bound_points.pt_max.x,bound_points.pt_max.y,bound_points.pt_max.z);
+            cld_in->points[*pit].r = 0;
+            cld_in->points[*pit].g = 40 * (j + 1);
+            cld_in->points[*pit].b = 0;
+            cld_in->points[*pit].a = 255;
         }
-        ROS_INFO("Final MinMax [x y z x y z]: %f %f %f %f %f %f", bound_points.pt_min.x, bound_points.pt_min.y, bound_points.pt_min.z, bound_points.pt_max.x, bound_points.pt_max.y, bound_points.pt_max.z);
 
         cloud_cluster->width = cloud_cluster->size();
         cloud_cluster->height = 1;
         cloud_cluster->is_dense = true;
-        ROS_INFO("Cluster [%i]: %i", j, cloud_cluster->size());
+        //ROS_INFO("Cluster [%i]: %i", j, cloud_cluster->size());
 
         //Calculate centroid
         Eigen::Vector4f centroid;
         pcl::compute3DCentroid(*cloud_cluster, centroid);
-        ROS_INFO("Centroid [%i]: %f %f %f %f", j, centroid[0], centroid[1], centroid[2], centroid[3]);
+        //   ROS_INFO("Centroid [%i]: %f %f %f %f", j, centroid[0], centroid[1], centroid[2], centroid[3]);
         m_centroid.markers.push_back(addCentroid(centroid[0], centroid[1], centroid[2], j));
+
+        // ROS_INFO("Final MinMax [x y z x y z]: %f %f %f %f %f %f", bound_points.pt_min.x, bound_points.pt_min.y, bound_points.pt_min.z, bound_points.pt_max.x, bound_points.pt_max.y, bound_points.pt_max.z);
+
+        //Get convex hull to get minmax
+        pcl::ConvexHull<pcl::PointXYZRGBA> cHull;
+        cHull.setInputCloud(cloud_cluster);
+        cHull.reconstruct(*cHull_pts);
+
+        for (int k{ 0 }; k < cHull_pts->size(); ++k) {
+            compareVals(cHull_pts->points[k], bound_points); //Get minMax vals of cluster
+        }
 
         float length{ bound_points.pt_max.x - bound_points.pt_min.x };
         float breadth{ bound_points.pt_max.y - bound_points.pt_min.y };
         float height{ bound_points.pt_max.z - bound_points.pt_min.z };
         m_boundRect.markers.push_back(addBoundRect(centroid[0], centroid[1], centroid[2], length, breadth, height, j));
-        ROS_INFO("Final lbh [x y z]: %f %f %f ", length, breadth, height);
-        pubObjSeg.publish(cld_in);
+        //      ROS_INFO("Final lbh [x y z]: %f %f %f ", length, breadth, height);
+
+        pubObjSeg.publish(*cld_in);
 
         ++j;
+        initMinMax(bound_points);
     }
-    pcl::io::savePCDFileASCII("save_3.pcd", cld_in);
+    pcl::io::savePCDFileASCII("save_3.pcd", *cld_in);
+
     pubMarker.publish(m_centroid);
     pubBoundRect.publish(m_boundRect);
 }
@@ -277,7 +306,10 @@ void cloud_cb(const sensor_msgs::PointCloud2ConstPtr& pcl_in)
     vx_grid(cloud, cloud_filtered, 0.005f); //Voxel filter, 0.5cm leafsize
     sor_filter(cloud_filtered, cloud_filtered2, 50, 0.15f); //StatisticalOutlierRemoval Filter, mean_k:50, std_dv_threshold: 0.15f
     //p_seg(cloud_filtered2,cloud_filtered3);	 //Segmentation 	//Cpommented out as stereo image does not show any ground plane
-    euclus(cloud_filtered2);
+
+    pcl::PointCloud<pcl::PointXYZRGBA>::Ptr cld_tmp(new pcl::PointCloud<pcl::PointXYZRGBA>);
+    *cld_tmp = cloud_filtered2;
+    euclus(cld_tmp);
 }
 
 int main(int argc, char** argv)
