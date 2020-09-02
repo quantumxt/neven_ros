@@ -24,6 +24,8 @@
 #include <geometry_msgs/Pose.h>
 #include <geometry_msgs/Vector3.h>
 
+#include <std_msgs/ColorRGBA.h>
+
 ros::Publisher pubObjSeg;
 ros::Publisher pubMarker;
 ros::Publisher pubBoundRect;
@@ -83,7 +85,17 @@ geometry_msgs::Vector3 createScale(const float& sx, const float& sy, const float
     return scl;
 }
 
-visualization_msgs::Marker addMarker(const geometry_msgs::Pose& mkr_pose, const geometry_msgs::Vector3& mkr_size, const float& idx, const char* mkr_ns, const int& mType)
+std_msgs::ColorRGBA createColor(const float& r, const float& g, const float& b, const float& a)
+{
+    std_msgs::ColorRGBA mClr;
+    mClr.r = r;
+    mClr.g = g;
+    mClr.b = b;
+    mClr.a = a; // Don't forget to set the alpha! (0.0-1.0)
+    return mClr;
+}
+
+visualization_msgs::Marker addMarker(const geometry_msgs::Pose& mkr_pose, const geometry_msgs::Vector3& mkr_size, const std_msgs::ColorRGBA& mkr_clr, const float& idx, const char* mkr_ns, const int& mType)
 {
     visualization_msgs::Marker marker;
     marker.header.frame_id = "cam_link";
@@ -94,22 +106,19 @@ visualization_msgs::Marker addMarker(const geometry_msgs::Pose& mkr_pose, const 
     marker.action = visualization_msgs::Marker::ADD;
     marker.pose = mkr_pose;
     marker.scale = mkr_size;
-    marker.color.a = 1.0; // Don't forget to set the alpha!
-    marker.color.r = 0.0;
-    marker.color.g = 1.0;
-    marker.color.b = 0.0;
+    marker.color = mkr_clr;
     marker.lifetime = ros::Duration(5.0); //Expires in 5s
     return marker;
 }
 
 visualization_msgs::Marker addCentroid(const float& pt_x, const float& pt_y, const float& pt_z, const float& idx)
 {
-    return addMarker(createPose(pt_x, pt_y, pt_z), createScale(0.05, 0.05, 0.05), idx, "pcl_marker_centroid", visualization_msgs::Marker::SPHERE);
+    return addMarker(createPose(pt_x, pt_y, pt_z), createScale(0.05, 0.05, 0.05), createColor(0.0, 1.0, 0.0, 1.0), idx, "pcl_marker_centroid", visualization_msgs::Marker::SPHERE);
 }
 
 visualization_msgs::Marker addBoundRect(const float& pt_x, const float& pt_y, const float& pt_z, const float& pt_l, const float& pt_b, const float& pt_h, const float& idx)
 {
-    return addMarker(createPose(pt_x, pt_y, pt_z), createScale(pt_l, pt_b, pt_h), idx, "pcl_marker_boundRect", visualization_msgs::Marker::CUBE);
+    return addMarker(createPose(pt_x, pt_y, pt_z), createScale(pt_l, pt_b, pt_h), createColor(0.0, 0.0, 1.0, 0.5), idx, "pcl_marker_boundRect", visualization_msgs::Marker::CUBE);
 }
 
 //Downsample/Reduces num of pcl
@@ -237,9 +246,9 @@ void euclus(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in)
         ROS_INFO("Centroid [%i]: %f %f %f %f", j, centroid[0], centroid[1], centroid[2], centroid[3]);
         m_centroid.markers.push_back(addCentroid(centroid[0], centroid[1], centroid[2], j));
 
-        float length{ abs(bound_points.pt_min.x) + bound_points.pt_max.x };
-        float breadth{ abs(bound_points.pt_min.y) + bound_points.pt_max.y };
-        float height{ abs(bound_points.pt_min.z) + bound_points.pt_max.z };
+        float length{ bound_points.pt_max.x - bound_points.pt_min.x };
+        float breadth{ bound_points.pt_max.y - bound_points.pt_min.y };
+        float height{ bound_points.pt_max.z - bound_points.pt_min.z };
         m_boundRect.markers.push_back(addBoundRect(centroid[0], centroid[1], centroid[2], length, breadth, height, j));
         ROS_INFO("Final lbh [x y z]: %f %f %f ", length, breadth, height);
         pubObjSeg.publish(cld_in);
