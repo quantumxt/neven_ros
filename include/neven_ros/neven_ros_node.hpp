@@ -22,6 +22,7 @@
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
+#include <pcl/common/common.h>
 
 #include <pcl/filters/voxel_grid.h>
 #include <pcl/filters/statistical_outlier_removal.h>
@@ -34,7 +35,6 @@
 #include <pcl/features/normal_3d.h>
 #include <pcl/kdtree/kdtree.h>
 #include <pcl/segmentation/extract_clusters.h>
-#include <pcl/surface/concave_hull.h>
 
 #include <visualization_msgs/MarkerArray.h>
 #include <visualization_msgs/Marker.h>
@@ -52,27 +52,16 @@ void init();
 void cloud_cb(const sensor_msgs::PointCloud2ConstPtr& pcl_in);
 
 private:
+ros::Subscriber subPCL;
 ros::Publisher pubObjSeg;
 ros::Publisher pubMarker;
 ros::Publisher pubBoundRect;
 
     ros::NodeHandle nh; //Node handle
 
-//Create minMax struct to keep track of pcl cluster boundary
-struct pt {
-    float x;
-    float y;
-    float z;
-};
-
-struct minMax {
-    pt pt_min;
-    pt pt_max;
-};
+bool colorCluster{false};
 
 //Utilities
-void initMinMax(minMax& src);
-void compareVals(const pcl::PointXYZRGBA& pcl_in, minMax& src);
 geometry_msgs::Pose createPose(const float& sx, const float& sy, const float& sz);
 geometry_msgs::Vector3 createScale(const float& sx, const float& sy, const float& sz);
 std_msgs::ColorRGBA createColor(const float& r, const float& g, const float& b, const float& a);
@@ -84,5 +73,5 @@ visualization_msgs::Marker addBoundRect(const float& pt_x, const float& pt_y, co
 void vx_grid(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out, const float& leafSize);
 void sor_filter(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out, const int& mean_k, const float& std_thres);
 void p_seg(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out);
-void euclus(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr& cld_in);
+void euclus(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr& cld_in, const int &clus_min, const int &clus_max);
 };
