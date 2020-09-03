@@ -315,7 +315,7 @@ void cloud_cb(const sensor_msgs::PointCloud2ConstPtr& pcl_in)
 int main(int argc, char** argv)
 {
     // Initialize ROS
-    ros::init(argc, argv, "v_grid");
+    ros::init(argc, argv, "neven_node");
     ros::NodeHandle nh;
 
     //ros::param::set("dist_th", 0.1);	// Set ROS param
