@@ -1,48 +1,37 @@
-#include <ros/ros.h>
-// PCL specific includes
-#include <sensor_msgs/PointCloud2.h>
-#include <pcl_conversions/pcl_conversions.h>
-#include <pcl/point_cloud.h>
-#include <pcl/point_types.h>
+/*
+ * Object segmentation via PCL Euclidean Cluster Extraction ROS node
+ * neven_ros_node.cpp
+ *
+ *    _  _______   _______  __
+ *   / |/ / __/ | / / __/ |/ /
+ *  /    / _/ | |/ / _//    / 
+ * /_/|_/___/ |___/___/_/|_/  
+ *                            
+ *
+ * Copyright (C) 2020 Neven 
+ * By 1487Quantum (https://github.com/1487quantum)
+ * 
+ * 
+ * Licensed under the BSD-2-Clause License .
+ * 
+ */
 
-#include <pcl/filters/voxel_grid.h>
-#include <pcl/filters/statistical_outlier_removal.h>
+#include "neven_ros/neven_ros_node.hpp"
 
-#include <pcl/sample_consensus/method_types.h>
-#include <pcl/segmentation/sac_segmentation.h>
-#include <pcl_ros/point_cloud.h>
+NevenNode::NevenNode(const ros::NodeHandle& nh_){
+    this->nh = nh_;
+}
 
-#include <pcl/filters/extract_indices.h>
-#include <pcl/features/normal_3d.h>
-#include <pcl/kdtree/kdtree.h>
-#include <pcl/segmentation/extract_clusters.h>
-#include <pcl/surface/concave_hull.h>
+void NevenNode::init(){
+ ros::Subscriber sub = this->nh.subscribe("/cam/points2", 1, &NevenNode::cloud_cb, this); // ROS subscriber
 
-#include <visualization_msgs/MarkerArray.h>
-#include <visualization_msgs/Marker.h>
+    //ROS publisher
+    pubObjSeg = this->nh.advertise<pcl::PointCloud<pcl::PointXYZRGBA> >("obj_segmentation", 1);
+    pubMarker = this->nh.advertise<visualization_msgs::MarkerArray>("obj_centroid", 1);
+    pubBoundRect = this->nh.advertise<visualization_msgs::MarkerArray>("obj_boundRect", 1);
+}
 
-#include <geometry_msgs/Pose.h>
-#include <geometry_msgs/Vector3.h>
-
-#include <std_msgs/ColorRGBA.h>
-
-ros::Publisher pubObjSeg;
-ros::Publisher pubMarker;
-ros::Publisher pubBoundRect;
-
-//Create minMax struct to keep track of pcl cluster boundary
-struct pt {
-    float x;
-    float y;
-    float z;
-};
-
-struct minMax {
-    pt pt_min;
-    pt pt_max;
-};
-
-void initMinMax(minMax& src)
+void NevenNode::initMinMax(minMax& src)
 {
     constexpr float pMin{ 10000.0f };
     src.pt_min.x = pMin;
@@ -53,7 +42,7 @@ void initMinMax(minMax& src)
     src.pt_max.z = -pMin;
 }
 
-void compareVals(const pcl::PointXYZRGBA& pcl_in, minMax& src)
+void NevenNode::compareVals(const pcl::PointXYZRGBA& pcl_in, minMax& src)
 {
     if (pcl_in.x < src.pt_min.x) {
         src.pt_min.x = pcl_in.x;
@@ -79,7 +68,7 @@ void compareVals(const pcl::PointXYZRGBA& pcl_in, minMax& src)
     //ROS_INFO("MinMax [x y z x y z]: %f %f %f %f %f %f", src.pt_min.x,src.pt_min.y,src.pt_min.z, src.pt_max.x,src.pt_max.y,src.pt_max.z);
 }
 
-geometry_msgs::Pose createPose(const float& sx, const float& sy, const float& sz)
+geometry_msgs::Pose NevenNode::createPose(const float& sx, const float& sy, const float& sz)
 {
     geometry_msgs::Pose ps;
     ps.position.x = sx;
@@ -92,7 +81,7 @@ geometry_msgs::Pose createPose(const float& sx, const float& sy, const float& sz
     return ps;
 }
 
-geometry_msgs::Vector3 createScale(const float& sx, const float& sy, const float& sz)
+geometry_msgs::Vector3 NevenNode::createScale(const float& sx, const float& sy, const float& sz)
 {
     geometry_msgs::Vector3 scl;
     scl.x = sx;
@@ -101,7 +90,7 @@ geometry_msgs::Vector3 createScale(const float& sx, const float& sy, const float
     return scl;
 }
 
-std_msgs::ColorRGBA createColor(const float& r, const float& g, const float& b, const float& a)
+std_msgs::ColorRGBA NevenNode::createColor(const float& r, const float& g, const float& b, const float& a)
 {
     std_msgs::ColorRGBA mClr;
     mClr.r = r;
@@ -111,7 +100,7 @@ std_msgs::ColorRGBA createColor(const float& r, const float& g, const float& b, 
     return mClr;
 }
 
-visualization_msgs::Marker addMarker(const geometry_msgs::Pose& mkr_pose, const geometry_msgs::Vector3& mkr_size, const std_msgs::ColorRGBA& mkr_clr, const float& idx, const char* mkr_ns, const int& mType)
+visualization_msgs::Marker NevenNode::addMarker(const geometry_msgs::Pose& mkr_pose, const geometry_msgs::Vector3& mkr_size, const std_msgs::ColorRGBA& mkr_clr, const float& idx, const char* mkr_ns, const int& mType)
 {
     visualization_msgs::Marker marker;
     marker.header.frame_id = "cam_link";
@@ -127,18 +116,18 @@ visualization_msgs::Marker addMarker(const geometry_msgs::Pose& mkr_pose, const 
     return marker;
 }
 
-visualization_msgs::Marker addCentroid(const float& pt_x, const float& pt_y, const float& pt_z, const float& idx)
+visualization_msgs::Marker NevenNode::addCentroid(const float& pt_x, const float& pt_y, const float& pt_z, const float& idx)
 {
     return addMarker(createPose(pt_x, pt_y, pt_z), createScale(0.05, 0.05, 0.05), createColor(0.0, 1.0, 0.0, 1.0), idx, "pcl_marker_centroid", visualization_msgs::Marker::SPHERE);
 }
 
-visualization_msgs::Marker addBoundRect(const float& pt_x, const float& pt_y, const float& pt_z, const float& pt_l, const float& pt_b, const float& pt_h, const float& idx)
+visualization_msgs::Marker NevenNode::addBoundRect(const float& pt_x, const float& pt_y, const float& pt_z, const float& pt_l, const float& pt_b, const float& pt_h, const float& idx)
 {
     return addMarker(createPose(pt_x, pt_y, pt_z), createScale(pt_l, pt_b, pt_h), createColor(0.0, 0.0, 1.0, 0.5), idx, "pcl_marker_boundRect", visualization_msgs::Marker::CUBE);
 }
 
 //Downsample/Reduces num of pcl
-void vx_grid(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out, const float& leafSize)
+void NevenNode::vx_grid(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out, const float& leafSize)
 {
     //    ROS_INFO("Running Voxel Filter...");
     constexpr float f_limit[2] = { 0.01f, 3.0f };
@@ -154,7 +143,7 @@ void vx_grid(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<p
 }
 
 //Filters noise
-void sor_filter(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out, const int& mean_k, const float& std_thres)
+void NevenNode::sor_filter(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out, const int& mean_k, const float& std_thres)
 {
     pcl::StatisticalOutlierRemoval<pcl::PointXYZRGBA> sor;
     sor.setInputCloud(cld_in.makeShared());
@@ -164,7 +153,7 @@ void sor_filter(const pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointClou
     pcl::io::savePCDFileASCII("pcl_sor.pcd", cld_out);
 }
 
-void p_seg(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out)
+void NevenNode::p_seg(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::PointXYZRGBA>& cld_out)
 {
     //Segmentation
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients());
@@ -210,7 +199,7 @@ void p_seg(pcl::PointCloud<pcl::PointXYZRGBA>& cld_in, pcl::PointCloud<pcl::Poin
     }
 }
 
-void euclus(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr& cld_in)
+void NevenNode::euclus(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr& cld_in)
 {
     // Creating the KdTree object for the search method of the extraction
     pcl::search::KdTree<pcl::PointXYZRGBA>::Ptr tree(new pcl::search::KdTree<pcl::PointXYZRGBA>);
@@ -289,7 +278,7 @@ void euclus(pcl::PointCloud<pcl::PointXYZRGBA>::Ptr& cld_in)
     pubBoundRect.publish(m_boundRect);
 }
 
-void cloud_cb(const sensor_msgs::PointCloud2ConstPtr& pcl_in)
+void NevenNode::cloud_cb(const sensor_msgs::PointCloud2ConstPtr& pcl_in)
 {
     // Convert the sensor_msgs/PointCloud2 data to pcl/PointCloud
     pcl::PointCloud<pcl::PointXYZRGBA> cloud;
@@ -320,12 +309,9 @@ int main(int argc, char** argv)
 
     //ros::param::set("dist_th", 0.1);	// Set ROS param
 
-    ros::Subscriber sub = nh.subscribe("/cam/points2", 1, cloud_cb); // Create a ROS subscriber for the input point cloud
-
-    // Create a ROS publisher for the model coefficients
-    pubObjSeg = nh.advertise<pcl::PointCloud<pcl::PointXYZRGBA> >("obj_segmentation", 1);
-    pubMarker = nh.advertise<visualization_msgs::MarkerArray>("obj_centroid", 1);
-    pubBoundRect = nh.advertise<visualization_msgs::MarkerArray>("obj_boundRect", 1);
+NevenNode nvn(nh);
+nvn.init();
+   
     // Spin
     ros::spin();
 }
